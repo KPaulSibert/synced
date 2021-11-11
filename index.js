@@ -5,50 +5,75 @@ export function SymbolScope(name){
         }
     })
 }
-/**@param {Server} srv */
-export function table(srv,data){
-    function parseTable(data){
-        let {fields,values,type,...other} = data;
-        type = srv.getType(type);
-        Object.assign(type,other)
-        for(const [id,arr] of Object.entries(values)){
-            srv.updateObj(type,id,Object.fromEntries(fields.map((e,i)=>[e,arr[i]])))
+export const web = SymbolScope('web')
+export function WebType(type,server,name){
+    const ctx = {objects:{},server,name,
+        provideId(id){
+            return id in this.objects?this.objects[id]:(this.objects[id] = Object.assign(new this(),{id}))
         }
     }
-    if(Array.isArray(data)){return data.map(e=>parseTable(data))}
-    else{return parseTable(data)}
+    const proxy = new Proxy(type,{
+        get(t,p){return p in ctx?ctx[p]:t[p]},
+         
+    })
+    for(const symbol of Object.getOwnPropertySymbols(type)){
+        const [scope,name] = symbol.description.split(':')
+        if(scope=='web'){
+            const cb = type[symbol]
+            ctx[name] = webmethod(proxy,name,cb)
+        }
+    }
+    return proxy
 }
-export const web = SymbolScope('web')
-
 export default class Server{
     constructor(url=""){
         this.url = url
     }
     add(types={}){
-        Object.assign(this.types,types);
         for(const [tname,type] of Object.entries(types)){
-            if(type.objects==undefined){type.objects = {}}
-            for(const symbol of Object.getOwnPropertySymbols(type)){
-                const [scope,name] = symbol.description.split(':')
-                if(scope=='web'){
-                    const cb = type[symbol]
-                    type[name] = webmethod(this,tname,name,cb)
+            types[tname] = WebType(type,this,tname)
+        }
+        Object.assign(this.types,types)
+        return types
+    }
+    table(data){
+        const parseTable = (data)=>{
+            let {fields,values,type,...other} = data;
+            type = this.getType(type);
+            Object.assign(type,other)
+            for(const [id,arr] of Object.entries(values)){
+                const obj = {}
+                for(const [i,val] of Object.entries(arr)){
+                    const field = fields[i]
+                    const ftype = type.fields?.[field]
+                    if(ftype){
+                        const parser = ftype.parseField || ftype.provideId
+                        obj[field] = parser.apply(ftype,[val,type,field])
+                    }else{
+                        obj[field] = val
+                    }
                 }
+                Object.assign(type.provideId(id),obj)
             }
         }
+        if(Array.isArray(data)){return data.map(e=>parseTable(data))}
+        else{return parseTable(data)}
     }
-    updateObj(type,id,data){
-        if(id in type.objects){Object.assign(type.objects[id],data)}
-        else{data.id = id;type.objects[id] = data}
-        return
+    getType(data){
+        if(Array.isArray(data)){
+            const [name,...args] = data
+            const type = this.types[name]
+            if(!type)return;
+            const fn = type.generic || ((o)=>({...o,__proto__:type}));
+            return fn(...args)
+        }else{return this.types[data]}
     }
-    getType(name){return this.types[name]}
     types = {}
     url=""
 }
-export function webmethod(server,type,name,cb){
+export function webmethod(type,name,cb){
     const fn = async function(args){
-        const req = await fetch(`${server.url}/${type}/${name}`,{method:'POST',body:JSON.stringify(args)})
+        const req = await fetch(`${type.server.url}/${type.name}/${name}`,{method:'POST',body:JSON.stringify(args)})
         let result = await req.json()
         if(cb){
             const modifed = cb(result)
@@ -56,6 +81,10 @@ export function webmethod(server,type,name,cb){
         }
         return result
     }
-    Object.defineProperty(fn, 'name', {value: name, writable: false});
     return fn
+}
+export class jsonType{
+    static parseField(val){
+        return JSON.parse(val)
+    }
 }

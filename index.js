@@ -17,16 +17,18 @@ export function WebType(type,server,name){
          
     })
     type.prototype.class = proxy
-    while(type){
+    let proto = type
+    while(proto){
         for(const symbol of Object.getOwnPropertySymbols(type)){
             const [scope,name] = symbol.description.split(':')
-            if(scope=='web'){
+            if(scope=='web' && !ctx[name]){
                 const cb = type[symbol]
                 ctx[name] = webmethod(proxy,name,cb)
             }
         }
-        type = type.__proto__
-    } 
+        proto = proto.__proto__
+    }
+    if(type.bindServer){type.bindServer(ctx,ctx)}
     return proxy
 }
 export default class Server{

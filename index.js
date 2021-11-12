@@ -16,6 +16,7 @@ export function WebType(type,server,name){
         get(t,p){return p in ctx?ctx[p]:t[p]},
          
     })
+    type.prototype.class = proxy
     while(type){
         for(const symbol of Object.getOwnPropertySymbols(type)){
             const [scope,name] = symbol.description.split(':')
@@ -94,5 +95,5 @@ export class jsonType{
     static parseField(val){ return JSON.parse(val)}
 }
 export class dateType{
-    static parseField(val){ return new Date(val)}
+    static parseField(val){ return val && new Date(val)}
 }

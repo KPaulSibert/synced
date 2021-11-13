@@ -19,10 +19,10 @@ export function WebType(type,server,name){
     type.prototype.class = proxy
     let proto = type
     while(proto){
-        for(const symbol of Object.getOwnPropertySymbols(type)){
+        for(const symbol of Object.getOwnPropertySymbols(proto)){
             const [scope,name] = symbol.description.split(':')
             if(scope=='web' && !ctx[name]){
-                const cb = type[symbol]
+                const cb = proto[symbol]
                 ctx[name] = webmethod(proxy,name,cb)
             }
         }
@@ -47,6 +47,7 @@ export default class Server{
             let {fields,values,type,...other} = data;
             type = this.getType(type);
             Object.assign(type,other)
+            if(!values){return}
             for(const [id,arr] of Object.entries(values)){
                 const obj = {}
                 for(const [i,val] of Object.entries(arr)){
@@ -62,7 +63,7 @@ export default class Server{
                 Object.assign(type.provideId(id),obj)
             }
         }
-        if(Array.isArray(data)){return data.map(e=>parseTable(data))}
+        if(Array.isArray(data)){return data.map(e=>parseTable(e))}
         else{return parseTable(data)}
     }
     getType(data){

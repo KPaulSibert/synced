@@ -11,8 +11,6 @@ def table(qs:QuerySet,*args):
     fields = args if len(args) else [f.name for f in md._meta.fields if f !=pk]
     values = {arr[0]:list(arr[1:]) for arr in qs.values_list(pk.name,*fields)}
     return {'fields':fields,'values':values,'type':str(md.__name__)}
-class Inp:
-    def json():pass
 class Server:
     prefix="api"
     types={}
@@ -31,3 +29,11 @@ class Server:
 def web(fn):
     fn._web_allowed=True
     return fn
+def extends(*objs):
+    def wrapper(cls):
+        d = dict(cls.__dict__)
+        for obj in objs:
+            for k in d:
+                if k in ['__module__','__dict__']:continue
+                setattr(obj,k,d[k])
+    return wrapper

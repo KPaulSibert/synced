@@ -1,7 +1,16 @@
 export function SymbolScope(name){
-    return new Proxy({},{
-        get(cache,key,r){
+    let proxy
+    const cache = {}
+    return proxy = new Proxy(()=>{},{
+        get(fn,key,r){
             return cache[key]||(cache[key] = Symbol(`${name}:${key}`))
+        },
+        apply(tg,_,[obj,self]){
+            if(obj=='in'){
+                return [...iterSymbols(self)].filter(([s])=>s==name).map(a=>a.splice(1))
+            }else{
+                for(const key in obj){obj[proxy[key]] = obj[key]}
+            }
         }
     })
 }
@@ -17,28 +26,36 @@ function *iterSymbols(obj){
 }
 export const web = SymbolScope('web')
 export const cmp = SymbolScope('computed')// todo
-export const fld = SymbolScope('field')// todo
+export const fld = SymbolScope('field')
+export const ctr = SymbolScope('constructor')
+export function newClass(obj,ext=Object,ctrs={}){
+    const {constructor:ctr,name,...props} = obj
+    const classGener = new Function('ctrs','ext',`return class ${name} extends ext{
+        constructor(...args){super();for(const ctr of Object.values(ctrs)){ctr.apply(this,args)}}}`)
+    const cls = classGener(ctrs,ext)
+    Object.assign(cls,props)
+    return cls
+}
 export function WebType(type,server,name){
-    const ctx = {objects:{},server,name,
+    const ctrs = {} //constructors
+    const newType = newClass({name,
+        objects:{},
+        server,
         provideId(id){
             return id in this.objects?this.objects[id]:(this.objects[id] = Object.assign(new this(id),{id}))
-        }
-    }
-    const proxyHandler = {
-        get(t,p){return p in ctx?ctx[p]:t[p]} 
-    }
-    const proxy = new Proxy(type,proxyHandler)
-    const opts = {proxy,proxyHandler,ctx}
-    for(const [scope,name,val,tg] of iterSymbols(type)){
+        },
+    },type,ctrs)
+    const opts = {ctrs,newType}
+    for(const [scope,name,val,tg] of iterSymbols(newType)){
         if(!(scope in symbolHandlers)){continue}
         symbolHandlers[scope](tg,name,{val,isProto:false,...opts})
     }
-    for(const [scope,name,val,tg] of iterSymbols(type.prototype)){
+    for(const [scope,name,val,tg] of iterSymbols(newType.prototype)){
         if(!(scope in symbolHandlers)){continue}
         symbolHandlers[scope](tg,name,{val,isProto:true,...opts})
     }
-    if(type.bindServer){type.bindServer(ctx,ctx)}
-    return proxy
+    if(type.bindServer){type.bindServer(newType,newType)}
+    return newType
 }
 export default class Server{
     constructor(url=""){
@@ -106,8 +123,8 @@ export const symbolHandlers = {
             return result
         }
     },
-    cmp(tg,name,{val:cb,isProto}){
-
+    constructor(tg,name,{val,ctrs}){
+        ctrs[name] = val
     }
 }
 // types

@@ -5,28 +5,37 @@ export function SymbolScope(name){
         }
     })
 }
+function *iterSymbols(obj){
+    let current = obj
+    while(current){
+        for(const symbol of Object.getOwnPropertySymbols(current)){
+            const [scope,name] = symbol.description.split(':')
+            yield [scope,name,current[symbol],current]
+        }
+        current = current.__proto__
+    }
+}
 export const web = SymbolScope('web')
+export const cmp = SymbolScope('computed')// todo
+export const fld = SymbolScope('field')// todo
 export function WebType(type,server,name){
     const ctx = {objects:{},server,name,
         provideId(id){
             return id in this.objects?this.objects[id]:(this.objects[id] = Object.assign(new this(id),{id}))
         }
     }
-    const proxy = new Proxy(type,{
-        get(t,p){return p in ctx?ctx[p]:t[p]},
-         
-    })
-    type.prototype.class = proxy
-    let proto = type
-    while(proto){
-        for(const symbol of Object.getOwnPropertySymbols(proto)){
-            const [scope,name] = symbol.description.split(':')
-            if(scope=='web' && !ctx[name]){
-                const cb = proto[symbol]
-                ctx[name] = webmethod(proxy,name,cb)
-            }
-        }
-        proto = proto.__proto__
+    const proxyHandler = {
+        get(t,p){return p in ctx?ctx[p]:t[p]} 
+    }
+    const proxy = new Proxy(type,proxyHandler)
+    const opts = {proxy,proxyHandler,ctx}
+    for(const [scope,name,val,tg] of iterSymbols(type)){
+        if(!(scope in symbolHandlers)){continue}
+        symbolHandlers[scope](tg,name,{val,isProto:false,...opts})
+    }
+    for(const [scope,name,val,tg] of iterSymbols(type.prototype)){
+        if(!(scope in symbolHandlers)){continue}
+        symbolHandlers[scope](tg,name,{val,isProto:true,...opts})
     }
     if(type.bindServer){type.bindServer(ctx,ctx)}
     return proxy
@@ -52,7 +61,7 @@ export default class Server{
                 const obj = {}
                 for(const [i,val] of Object.entries(arr)){
                     const field = fields[i]
-                    const ftype = type.fields?.[field]
+                    const ftype = type.prototype[fld[field]]
                     if(ftype){
                         const parser = ftype.parseField || ftype.provideId
                         obj[field] = parser.apply(ftype,[val,type,field])
@@ -76,24 +85,32 @@ export default class Server{
         }else{return this.types[data]}
     }
     types = {}
-    url=""
+    url = ""
 }
 export class Model{ 
     static [web.all](r){this.server.table(r)} 
     static vals(){return Object.values(this.objects)}
 }
-export function webmethod(type,name,cb){
-    const fn = async function(args){
-        const req = await fetch(`${type.server.url}/${type.name}/${name}`,{method:'POST',body:JSON.stringify(args)})
-        let result = await req.json()
-        if(cb){
-            const modifed = cb.apply(this,[result])
-            if(modifed!=undefined){result = modifed}
+// symbolHandlers
+export const symbolHandlers = {
+    web(tg,name,{val:cb,isProto}){
+        tg[name] = async function(args){
+            let type = isProto?this.class:this
+            if(isProto){args = [this.id,args]}
+            const req = await fetch(`${type.server.url}/${type.name}/${name}`,{method:'POST',body:JSON.stringify(args)})
+            let result = await req.json()   
+            if(cb){
+                const modifed = cb.apply(this,[result])
+                if(modifed!=undefined){result = modifed}
+            }
+            return result
         }
-        return result
+    },
+    cmp(tg,name,{val:cb,isProto}){
+
     }
-    return fn
 }
+// types
 export class jsonType{
     static parseField(val){ return JSON.parse(val)}
 }

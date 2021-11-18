@@ -1,11 +1,14 @@
 import json
+from typing import Union
 from django import http
+from django.db.models.base import Model
 from django.http.request import HttpRequest
 from django.http.response import HttpResponseNotAllowed, HttpResponseNotFound, JsonResponse
 from django.urls import path
+from django.forms.models import model_to_dict
 from django.views.decorators import csrf,http
 from django.db.models.query import QuerySet
-def table(qs:QuerySet,*args):
+def table(qs,*args):
     md = qs.model
     pk = md._meta.pk
     fields = args if len(args) else [f.name for f in md._meta.fields if f !=pk]
@@ -21,14 +24,24 @@ class Server:
         def methodView(r:HttpRequest,type,method):
             type = self.types.get(type)
             if type is None:return HttpResponseNotFound(f'type {type} wasnt found')
-            handler = getattr(type,method,None)
-            if handler is None:return HttpResponseNotFound(f'{type}.{method} doesnt exist')
-            if getattr(handler,'_web_allowed',False) != True: return HttpResponseNotAllowed(f'{type}.{method}')
-            return JsonResponse(handler(json.loads(r.body or "null"),r),safe=False)
+            # get method
+            method = getattr(type,method,None)
+            if method is None:return HttpResponseNotFound(f'{type}.{method} doesnt exist')
+            # get addons
+            handlers = getattr(method,'_web_handlers',None)
+            if handlers is None: return HttpResponseNotAllowed(f'{type}.{method}')
+            # call addons (security,setup args)
+            opts = {'args':[json.loads(r.body or "null")],'allowed':True}
+            for handler in handlers:handler(opts,r,type,method)
+            if not opts['allowed']:return HttpResponseNotAllowed(f'{type}.{method}')
+            # return dumped result
+            return JsonResponse(method(*opts['args']),safe=False)
         return path(self.prefix+"/<str:type>/<str:method>",methodView)
-def web(fn):
-    fn._web_allowed=True
-    return fn
+def web(*handlers):
+    def wrp(fn):
+        fn._web_handlers=handlers
+        return fn
+    return wrp
 def extends(*objs):
     def wrapper(cls):
         d = dict(cls.__dict__)
@@ -37,3 +50,15 @@ def extends(*objs):
                 if k in ['__module__','__dict__']:continue
                 setattr(obj,k,d[k])
     return wrapper
+
+# handlers
+def inst(opts,r,type:Model,meth):
+    [id,args] = opts['args'][0]
+    self = type.objects.get(id=id)
+    opts['args'] = [self,args]
+def req(o,r,t,m):
+    o['args'].append(r)
+def super_user(o,r:HttpRequest,t,m):
+    if not r.user or not r.user.is_superuser:o['allowed'] = False
+def logined(o,r:HttpRequest,t,m):
+    if not r.user.is_authenticated: o['allowed'] = False 

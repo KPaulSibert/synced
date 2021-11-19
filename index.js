@@ -36,34 +36,46 @@ export function newClass(obj,ext=Object,ctrs={}){
     Object.assign(cls,props)
     return cls
 }
-export function WebType(type,server,name){
-    const ctrs = {} //constructors
-    const newType = newClass({name,
-        objects:{},
-        server,
-        provideId(id){
-            return id in this.objects?this.objects[id]:(this.objects[id] = Object.assign(new this(id),{id}))
-        },
-    },type,ctrs)
-    const opts = {ctrs,newType}
-    for(const [scope,name,val,tg] of iterSymbols(newType)){
-        if(!(scope in symbolHandlers)){continue}
-        symbolHandlers[scope](tg,name,{val,isProto:false,...opts})
+export function setupType(type,opts={}){
+    for(const [scope,name,val,tg] of iterSymbols(type)){
+        if(!(scope in setupType.handlers)){continue}
+        setupType.handlers[scope](tg,name,{val,isProto:false,...opts})
     }
-    for(const [scope,name,val,tg] of iterSymbols(newType.prototype)){
-        if(!(scope in symbolHandlers)){continue}
-        symbolHandlers[scope](tg,name,{val,isProto:true,...opts})
+    for(const [scope,name,val,tg] of iterSymbols(type.prototype)){
+        if(!(scope in setupType.handlers)){continue}
+        setupType.handlers[scope](tg,name,{val,isProto:true,...opts})
     }
-    if(type.bindServer){type.bindServer(newType,newType)}
-    return newType
+}
+setupType.handlers = {
+    web(tg,name,{val:cb,isProto}){
+        tg[name] = async function(args){
+            let type = isProto?this.constructor:this
+            if(isProto){args = [this.id,args]}
+            const req = await fetch(`${type.server.url}/${type.name}/${name}`,{method:'POST',body:JSON.stringify(args)})
+            let result = await req.json()
+            if(cb){
+                const modifed = cb.apply(this,[result])
+                if(modifed!=undefined){result = modifed}
+            }
+            return result
+        }
+    },
+    constructor(tg,name,{val,ctrs}){ctrs[name] = val}
 }
 export default class Server{
     constructor(url=""){
         this.url = url
     }
+    bindType(type){
+        const ctrs = {} //constructors
+        const newType = newClass({name:type.name,server:this,objects:{}},type,ctrs)
+        setupType(newType,{ctrs,newType})
+        if(type.bindServer){type.bindServer(newType,newType)}
+        return newType
+    }
     add(types={}){
         for(const [tname,type] of Object.entries(types)){
-            types[tname] = WebType(type,this,tname)
+            types[tname] = this.bindType(type)
         }
         Object.assign(this.types,types)
         return types
@@ -104,27 +116,31 @@ export default class Server{
     types = {}
     url = ""
 }
-export class Model{ 
+export class Model{
     static [web.all](r){this.server.table(r)} 
     static vals(){return Object.values(this.objects)}
-}
-// symbolHandlers
-export const symbolHandlers = {
-    web(tg,name,{val:cb,isProto}){
-        tg[name] = async function(args){
-            let type = isProto?this.class:this
-            if(isProto){args = [this.id,args]}
-            const req = await fetch(`${type.server.url}/${type.name}/${name}`,{method:'POST',body:JSON.stringify(args)})
-            let result = await req.json()   
-            if(cb){
-                const modifed = cb.apply(this,[result])
-                if(modifed!=undefined){result = modifed}
+    static provideId(id){
+        return id in this.objects?this.objects[id]:(this.objects[id] = Object.assign(new this(id),{id}))
+    }
+    static fromJSON(data){
+            let {fields,values,type,...other} = data;
+            type = this.getType(type);
+            Object.assign(type,other)
+            if(!values){return}
+            for(const [id,arr] of Object.entries(values)){
+                const obj = {}
+                for(const [i,val] of Object.entries(arr)){
+                    const field = fields[i]
+                    const ftype = type.prototype[fld[field]]
+                    if(ftype){
+                        const parser = ftype.parseField || ftype.provideId
+                        obj[field] = parser.apply(ftype,[val,type,field])
+                    }else{
+                        obj[field] = val
+                    }
+                }
+                Object.assign(type.provideId(id),obj)
             }
-            return result
-        }
-    },
-    constructor(tg,name,{val,ctrs}){
-        ctrs[name] = val
     }
 }
 // types

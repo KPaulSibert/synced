@@ -9,11 +9,14 @@ from django.forms.models import model_to_dict
 from django.views.decorators import csrf,http
 from django.db.models.query import QuerySet
 def table(qs,*args):
-    md = qs.model
+    isInst = isinstance(qs,Model)
+    md = qs.__class__ if isInst else qs.model
     pk = md._meta.pk
     fields = args if len(args) else [f.name for f in md._meta.fields if f !=pk]
-    values = {arr[0]:list(arr[1:]) for arr in qs.values_list(pk.name,*fields)}
-    return {'fields':fields,'values':values,'type':str(md.__name__)}
+    values = None
+    if isInst:values = {qs.id:list(model_to_dict(qs,fields=fields).values())}
+    else:values = {arr[0]:list(arr[1:]) for arr in qs.values_list(pk.name,*fields)}
+    return {'fields':fields,'values':values,'$t':str(md.__name__)}
 class Server:
     prefix="api"
     types={}
@@ -50,7 +53,6 @@ def extends(*objs):
                 if k in ['__module__','__dict__']:continue
                 setattr(obj,k,d[k])
     return wrapper
-
 # handlers
 def inst(opts,r,type:Model,meth):
     [id,args] = opts['args'][0]
@@ -62,3 +64,16 @@ def super_user(o,r:HttpRequest,t,m):
     if not r.user or not r.user.is_superuser:o['allowed'] = False
 def logined(o,r:HttpRequest,t,m):
     if not r.user.is_authenticated: o['allowed'] = False 
+#extensions
+@extends(Model)
+class _Model:
+    @classmethod
+    @web()
+    def all(cls,o):
+        return table(cls.objects.all())
+    @web(inst)
+    def update(self:Model,o):
+        if 'id' in o:del o['id']
+        q = self.__class__.objects.filter(id=self.id)
+        q.update(**o)
+        return table(q)

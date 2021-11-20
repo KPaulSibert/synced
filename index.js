@@ -8,8 +8,12 @@ export function SymbolScope(name){
         apply(tg,_,[obj,self]){
             if(obj=='in'){
                 return [...iterSymbols(self)].filter(([s])=>s==name).map(a=>a.splice(1))
+            }else if(obj=='from'){
+                return Object.fromEntries([...iterSymbols(self)].filter(([s])=>s==name).map(a=>[a[1],a[2]]))
             }else{
-                for(const key in obj){obj[proxy[key]] = obj[key]}
+                const ret = {}
+                for(const key in obj){ret[proxy[key]] = obj[key]}
+                return ret
             }
         }
     })
@@ -25,9 +29,10 @@ function *iterSymbols(obj){
     }
 }
 export const web = SymbolScope('web')
-export const cmp = SymbolScope('computed')// todo
 export const fld = SymbolScope('field')
 export const ctr = SymbolScope('constructor')
+export const cfg = SymbolScope('config')
+export const on = SymbolScope('event')
 export function newClass(obj,ext=Object,ctrs={}){
     const {constructor:ctr,name,...props} = obj
     const classGener = new Function('ctrs','ext',`return class ${name} extends ext{
@@ -49,10 +54,12 @@ export function setupType(type,opts={}){
 setupType.handlers = {
     web(tg,name,{val:cb,isProto}){
         tg[name] = async function(args){
-            let type = isProto?this.constructor:this
+            const type = isProto?this.constructor:this
+            const server = type[cfg.server]
             if(isProto){args = [this.id,args]}
-            const req = await fetch(`${type.server.url}/${type.name}/${name}`,{method:'POST',body:JSON.stringify(args)})
+            const req = await fetch(`${server.url}/${type.name}/${name}`,{method:'POST',body:JSON.stringify(args)})
             let result = await req.json()
+            result = server.fromJSON(result)
             if(cb){
                 const modifed = cb.apply(this,[result])
                 if(modifed!=undefined){result = modifed}
@@ -68,9 +75,9 @@ export default class Server{
     }
     bindType(type){
         const ctrs = {} //constructors
-        const newType = newClass({name:type.name,server:this,objects:{}},type,ctrs)
+        const newType = newClass({name:type.name,[cfg.server]:this},type,ctrs)
         setupType(newType,{ctrs,newType})
-        if(type.bindServer){type.bindServer(newType,newType)}
+        if(type[on.extend]){type[on.extend](newType,newType)}
         return newType
     }
     add(types={}){
@@ -80,29 +87,20 @@ export default class Server{
         Object.assign(this.types,types)
         return types
     }
-    table(data){
-        const parseTable = (data)=>{
-            let {fields,values,type,...other} = data;
-            type = this.getType(type);
-            Object.assign(type,other)
-            if(!values){return}
-            for(const [id,arr] of Object.entries(values)){
-                const obj = {}
-                for(const [i,val] of Object.entries(arr)){
-                    const field = fields[i]
-                    const ftype = type.prototype[fld[field]]
-                    if(ftype){
-                        const parser = ftype.parseField || ftype.provideId
-                        obj[field] = parser.apply(ftype,[val,type,field])
-                    }else{
-                        obj[field] = val
-                    }
-                }
-                Object.assign(type.provideId(id),obj)
+    fromJSON(data){
+        if(data!=null && typeof data =="object"){
+            for(const key of Object.keys(data)){
+                data[key] = this.fromJSON(data[key])
+            }
+            if(data.$t){
+                const type = this.types[data.$t]
+                if(!type||!type[cfg.fromJSON]){
+                    throw Error(`${data.$t} type or his 'fromJSON' handler wasnt found`)}
+                delete data.$t
+                return type[cfg.fromJSON](data)
             }
         }
-        if(Array.isArray(data)){return data.map(e=>parseTable(e))}
-        else{return parseTable(data)}
+        return data
     }
     getType(data){
         if(Array.isArray(data)){
@@ -117,36 +115,57 @@ export default class Server{
     url = ""
 }
 export class Model{
-    static [web.all](r){this.server.table(r)} 
+    static [web.all](){}
+    [web.update](){} 
     static vals(){return Object.values(this.objects)}
+    static parseField(val){return this.provideId(val)}
+    static dumpField(val){return val.id}
     static provideId(id){
         return id in this.objects?this.objects[id]:(this.objects[id] = Object.assign(new this(id),{id}))
     }
-    static fromJSON(data){
-            let {fields,values,type,...other} = data;
-            type = this.getType(type);
-            Object.assign(type,other)
+    static [cfg.fromJSON](data){
+            let {fields,values,...other} = data;
+            Object.assign(this,other)
             if(!values){return}
             for(const [id,arr] of Object.entries(values)){
+                if(arr==null){console.log(id)
+                    delete this.objects[id];continue}
                 const obj = {}
                 for(const [i,val] of Object.entries(arr)){
                     const field = fields[i]
-                    const ftype = type.prototype[fld[field]]
-                    if(ftype){
-                        const parser = ftype.parseField || ftype.provideId
-                        obj[field] = parser.apply(ftype,[val,type,field])
+                    const ftype = this.prototype[fld[field]]
+                    if(ftype?.parseField){
+                        const parser = ftype.parseField
+                        obj[field] = parser.apply(ftype,[val,this,field])
                     }else{
                         obj[field] = val
                     }
                 }
-                Object.assign(type.provideId(id),obj)
+                Object.assign(this.provideId(id),obj)
             }
     }
+    static [on.extend](cls){cls.objects = {}}
+}
+export function dumpInst(obj){
+    const ret = {}
+    for(const [key,val] of Object.entries(obj)){
+        const ftype = obj[fld[key]]
+        if(ftype?.dumpField){
+            ret[key] = ftype.dumpField(val)
+        }
+        else if(val==null || !['object','function'].includes(typeof val)){
+            ret[key] = val
+        }
+    }
+    return ret
+    
 }
 // types
 export class jsonType{
     static parseField(val){ return JSON.parse(val)}
+    static dumpField(val){ return JSON.stringify(val)}
 }
 export class dateType{
     static parseField(val){ return val && new Date(val)}
+    static dumpField(val){return val&&val.toISOString().substr(0,10)}
 }

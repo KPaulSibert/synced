@@ -73,16 +73,16 @@ export default class Server{
     constructor(url=""){
         this.url = url
     }
-    bindType(type){
+    bindType(type,name){
         const ctrs = {} //constructors
-        const newType = newClass({name:type.name,[cfg.server]:this},type,ctrs)
+        const newType = newClass({name,[cfg.server]:this},type,ctrs)
         setupType(newType,{ctrs,newType})
         if(type[on.extend]){type[on.extend](newType,newType)}
         return newType
     }
     add(types={}){
         for(const [tname,type] of Object.entries(types)){
-            types[tname] = this.bindType(type)
+            types[tname] = this.bindType(type,tname)
         }
         Object.assign(this.types,types)
         return types

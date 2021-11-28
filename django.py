@@ -1,5 +1,4 @@
 import json
-from typing import Union
 from django import http
 from django.db.models.base import Model
 from django.http.request import HttpRequest
@@ -7,7 +6,6 @@ from django.http.response import HttpResponseNotAllowed, HttpResponseNotFound, J
 from django.urls import path
 from django.forms.models import model_to_dict
 from django.views.decorators import csrf,http
-from django.db.models.query import QuerySet
 def table(qs,*args):
     isInst = isinstance(qs,Model)
     md = qs.__class__ if isInst else qs.model

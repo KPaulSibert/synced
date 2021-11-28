@@ -1,3 +1,15 @@
+/* 
+add vue 
+configureWebpack:{
+    resolve:{
+      alias:{
+        'synced':path.resolve(__dirname,'../', 'synced')
+      }
+    }
+    
+  },
+*/
+
 export function SymbolScope(name){
     let proxy
     const cache = {}
@@ -28,18 +40,14 @@ function *iterSymbols(obj){
         current = current.__proto__
     }
 }
-export const web = SymbolScope('web')
+export const rmt = SymbolScope('remote')
 export const fld = SymbolScope('field')
 export const ctr = SymbolScope('constructor')
 export const cfg = SymbolScope('config')
 export const on = SymbolScope('event')
-export function newClass(obj,ext=Object,ctrs={}){
-    const {constructor:ctr,name,...props} = obj
-    const classGener = new Function('ctrs','ext',`return class ${name} extends ext{
-        constructor(...args){super();for(const ctr of Object.values(ctrs)){ctr.apply(this,args)}}}`)
-    const cls = classGener(ctrs,ext)
-    Object.assign(cls,props)
-    return cls
+export function newClass(name,ext){
+    const classGener = new Function('ext',`return class ${name} extends ext{}`)
+    return classGener(ext)
 }
 export function setupType(type,opts={}){
     for(const [scope,name,val,tg] of iterSymbols(type)){
@@ -51,23 +59,32 @@ export function setupType(type,opts={}){
         setupType.handlers[scope](tg,name,{val,isProto:true,...opts})
     }
 }
-setupType.handlers = {
-    web(tg,name,{val:cb,isProto}){
-        tg[name] = async function(args){
-            const type = isProto?this.constructor:this
-            const server = type[cfg.server]
-            if(isProto){args = [this.id,args]}
-            const req = await fetch(`${server.url}/${type.name}/${name}`,{method:'POST',body:JSON.stringify(args)})
-            let result = await req.json()
-            result = server.fromJSON(result)
-            if(cb){
-                const modifed = cb.apply(this,[result])
-                if(modifed!=undefined){result = modifed}
-            }
-            return result
+function remote(tg,name,{val:cb,isProto}){
+    tg[name] = async function(args){
+        const type = isProto?this.constructor:this
+        const src = this[cfg.ns][cfg.src]
+        if(isProto){args = [this.id,args]}
+        const req = await fetch(`${src}/${type.name}/${name}`,{method:'POST',body:JSON.stringify(args)})
+        let result = await req.json()
+        result = server.fromJSON(result)
+        if(cb){
+            const modifed = cb.apply(this,[result])
+            if(modifed!=undefined){result = modifed}
         }
-    },
-    constructor(tg,name,{val,ctrs}){ctrs[name] = val}
+        return result
+    }
+}
+export class Namespace{
+    constructor(src){this[cfg.src]=src}
+    [cfg.add](types){
+        for(const [tname,type] of Object.entries(types)){
+            const btype = types[tname] = newClass(tname,type);
+            btype[cfg.ns] = this
+            btype.prototype[cfg.ns] = this
+        }
+        Object.assign(this,types)
+        return types
+    }
 }
 export default class Server{
     constructor(url=""){
@@ -75,7 +92,8 @@ export default class Server{
     }
     bindType(type,name){
         const ctrs = {} //constructors
-        const newType = newClass({name,[cfg.server]:this},type,ctrs)
+        const newType = newClass({name,[cfg.remote]:this},type,ctrs)
+        newType.prototype[cfg.remote] = this
         setupType(newType,{ctrs,newType})
         if(type[on.extend]){type[on.extend](newType,newType)}
         return newType
@@ -115,8 +133,8 @@ export default class Server{
     url = ""
 }
 export class Model{
-    static [web.all](){}
-    [web.update](){} 
+    static [rmt.all](){}
+    [rmt.update](){} 
     static vals(){return Object.values(this.objects)}
     static parseField(val){return this.provideId(val)}
     static dumpField(val){return val.id}

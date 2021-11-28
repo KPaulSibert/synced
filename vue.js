@@ -1,5 +1,6 @@
 import {reactive,computed} from "vue"
 import {setupType,Model,SymbolScope, on} from "./index.js"
+export const gui = SymbolScope('gui')
 export const cmp = SymbolScope('computed')
 export const fn = SymbolScope('method')
 export const wtc = SymbolScope('watch')
@@ -30,3 +31,8 @@ export function component(obj){
     if(Object.keys(data).length){ret.data = ()=>({...data})}
     return ret
 }
+export const Gui = {render({$attrs}){
+    const [[name,val],...other] = Object.entries($attrs)
+    const attrs = Object.fromEntries(other)
+    return val[gui[name]].apply(val,[this,attrs])
+}}
